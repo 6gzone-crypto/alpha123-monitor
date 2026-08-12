@@ -33,11 +33,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet state.json 2>/dev/null; then
-            echo "state.json no change, skip"
-          else
+          if git status --porcelain state.json | grep -q .; then
             git add state.json
             git commit -m "update airdrop state [skip ci]"
             git push
             echo "state.json committed"
+          else
+            echo "state.json no change, skip"
           fi

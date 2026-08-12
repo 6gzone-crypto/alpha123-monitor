@@ -1,1 +1,54 @@
+name: Alpha123 空投监控
 
+# 触发时机（cron 为 UTC 时间，北京时间 = UTC+8）
+# 凌晨段：北京时间 0-7 点整点 = UTC 16-23 点整点
+# 白天段：北京时间 8-23 点的 10/30/50 分 = UTC 0-15 点的 10/30/50 分
+# GitHub Actions 最小调度间隔约 5 分钟，多个 cron 表达式可组合实现密集调度
+on:
+  schedule:
+    # 凌晨段（北京时间 0,1,2,3,4,5,6,7 点整点）
+    - cron: '0 16,17,18,19,20,21,22,23 * * *'
+    # 白天段 10 分（北京时间 8-23 点每小时第10分）
+    - cron: '10 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 * * *'
+    # 白天段 30 分
+    - cron: '30 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 * * *'
+    # 白天段 50 分
+    - cron: '50 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 * * *'
+  # 支持手动触发（用于测试）
+  workflow_dispatch:
+
+permissions:
+  contents: write  # 需要写权限以提交 state.json
+
+concurrency:
+  group: airdrop-check
+  cancel-in-progress: false  # 不取消正在运行的任务，避免 state 写入冲突
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 运行空投监控
+        env:
+          XTUIS_TOKEN: ${{ secrets.XTUIS_TOKEN }}
+          STATE_FILE: ${{ github.workspace }}/state.json
+        run: python3 src/airdrop_monitor.py
+
+      - name: 提交 state.json（持久化已推送记录）
+        run: |
+          # 配置 git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 检查 state.json 是否有变化
+          if git diff --quiet state.json 2>/dev/null; then
+            echo "state.json 无变化，跳过提交"
+          else
+            git add state.json
+            git commit -m "chore: update airdrop state [skip ci]"
+            git push
+            echo "state.json 已提交"
+          fi

@@ -47,14 +47,11 @@ HTTP_HEADERS = {
 HEARTBEAT_THRESHOLD_HOURS = 2
 # =========================================================
 
-
 def now_bjt():
     return datetime.now(BJT)
 
-
 def log(msg):
     print(f"[{now_bjt().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
-
 
 # ---------- 网络抓取 ----------
 def fetch_json(url, timeout=30):
@@ -63,24 +60,31 @@ def fetch_json(url, timeout=30):
         raw = resp.read().decode("utf-8", errors="replace")
     return json.loads(raw)
 
-
 # ---------- 空投数据解析 ----------
 def airdrop_id(a):
+    """细指纹：token|date|time|points，用于推送去重。
+    任一字段从空补全（或调整）都会改变指纹 -> 再推一次，实现"先粗略后精准"。"""
     token = str(a.get("token") or "").strip()
     date = str(a.get("date") or "").strip()
     t = str(a.get("time") or a.get("beijing_time") or "").strip()
-    key = f"{token}|{date}|{t}"
+    pts = str(a.get("points") or "").strip()
+    key = f"{token}|{date}|{t}|{pts}"
     if key.replace("|", "") == "":
-        key = f"{a.get('name') or 'unknown'}|{date}|{t}"
+        key = f"{a.get('name') or 'unknown'}|{date}|{t}|{pts}"
     return key
 
+def airdrop_coarse_id(a):
+    """粗指纹：token|date，用于累计计数。
+    同一空投的粗略版/精准版视为同一个，只增不减。"""
+    token = str(a.get("token") or "").strip()
+    date = str(a.get("date") or "").strip()
+    if not token and not date:
+        return f"{a.get('name') or 'unknown'}|{date}"
+    return f"{token}|{date}"
 
 def airdrop_category(a, today_str):
     date = str(a.get("date") or "")
-    status = str(a.get("status") or "").lower()
     if date == today_str:
-        return "today"
-    if status in ("ongoing", "active", "live"):
         return "today"
     if date and date > today_str:
         return "upcoming"
@@ -88,14 +92,12 @@ def airdrop_category(a, today_str):
         return "today"
     return "upcoming"
 
-
 def airdrop_title(a):
     token = a.get("token") or ""
     name = a.get("name") or ""
     if token and name:
         return f"{token} · {name}"
     return token or name or "未知项目"
-
 
 def airdrop_brief(a):
     parts = [f"项目: {airdrop_title(a)}"]
@@ -105,8 +107,6 @@ def airdrop_brief(a):
         parts.append(f"数量: {a.get('amount')}")
     if a.get("total_amount"):
         parts.append(f"总量: {a.get('total_amount')}")
-    if a.get("value"):
-        parts.append(f"价值: ${a.get('value')}")
     when = []
     if a.get("beijing_date") or a.get("date"):
         when.append(str(a.get("beijing_date") or a.get("date")))
@@ -118,7 +118,6 @@ def airdrop_brief(a):
         parts.append(f"状态: {a.get('status')}")
     return "\n".join(parts)
 
-
 # ---------- 状态文件 ----------
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -129,13 +128,11 @@ def load_state():
     except Exception:
         return None
 
-
 def save_state(state):
     tmp = STATE_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(tmp, STATE_FILE)
-
 
 # ---------- 推送通道 ----------
 def get_token():
@@ -145,7 +142,6 @@ def get_token():
         return token
     log("✗ 未设置 XTUIS_TOKEN 环境变量")
     return ""
-
 
 def push_xtuis(token, title, content):
     """虾推啥 (xtuis.cn)：POST https://wx.xtuis.cn/{token}.send
@@ -170,7 +166,6 @@ def push_xtuis(token, title, content):
     except Exception as e:
         return False, str(e)
 
-
 def push(title, content):
     token = get_token()
     if not token:
@@ -178,7 +173,6 @@ def push(title, content):
     ok, info = push_xtuis(token, title, content)
     log(f"{'✓' if ok else '✗'} [xtuis] {info}")
     return ok
-
 
 # ---------- 主流程 ----------
 def main():
@@ -204,12 +198,14 @@ def main():
 
     if is_first_run:
         seen = list(current.keys())
+        seen_coarse = list({airdrop_coarse_id(v["data"]) for v in current.values()})
         save_state({
             "last_check": now_bjt().isoformat(),
             "last_success": now_bjt().isoformat(),
             "seen_ids": seen,
+            "seen_airdrops": seen_coarse,
         })
-        log(f"首次运行，记录当前 {len(seen)} 条空投为已读基线。")
+        log(f"首次运行，记录当前 {len(seen)} 条空投为已读基线。累计监测到 {len(seen_coarse)} 个不同空投。")
 
         today_items = [v for v in current.values() if v["category"] == "today"]
         upcoming_items = [v for v in current.values() if v["category"] == "upcoming"]
@@ -234,15 +230,18 @@ def main():
         return 0
 
     seen_ids = set(prev_state.get("seen_ids", []))
+    seen_airdrops = set(prev_state.get("seen_airdrops", []))
     new_items = []
     for aid, info in current.items():
         if aid not in seen_ids:
             new_items.append(info)
+            seen_airdrops.add(airdrop_coarse_id(info["data"]))
 
     save_state({
         "last_check": now_bjt().isoformat(),
         "last_success": now_bjt().isoformat(),
         "seen_ids": list(current.keys()),
+        "seen_airdrops": list(seen_airdrops),
     })
 
     if not new_items:
@@ -286,7 +285,6 @@ def main():
     push(title, "\n".join(lines))
     return 0
 
-
 # ---------- 心跳检查 ----------
 def heartbeat():
     now = now_bjt()
@@ -322,7 +320,7 @@ def heartbeat():
 
     delta = now - last_dt
     hours = delta.total_seconds() / 3600
-    seen_count = len(state.get("seen_ids", []))
+    seen_count = len(state.get("seen_airdrops", []))
 
     if hours <= HEARTBEAT_THRESHOLD_HOURS:
         mins = int(delta.total_seconds() / 60)
@@ -330,7 +328,7 @@ def heartbeat():
         msg = (f"✅ Alpha123 空投监控运行正常\n"
                f"当前时间: {now.strftime('%Y-%m-%d %H:%M')} (北京时间)\n"
                f"最近一次成功检查: {last_dt.strftime('%Y-%m-%d %H:%M')} ({mins}分钟前)\n"
-               f"已记录空投数: {seen_count}\n"
+               f"累计监测到空投数: {seen_count}\n"
                f"监控页面: {PAGE_URL}")
         log(f"心跳: 运行正常（{mins}分钟前成功检查）。")
         push(title, msg)
@@ -349,7 +347,6 @@ def heartbeat():
         log(f"心跳: 运行异常（{hours:.1f}小时未成功）。")
         push(title, msg)
     return 0
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--heartbeat":

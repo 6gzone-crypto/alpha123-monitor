@@ -1,23 +1,27 @@
-name: heartbeat
+name: Alpha123 心跳检查
 
+# 每天北京时间 10:33 和 21:33 运行，推送监控运行状态
+# 北京时间 10:33 = UTC 02:33
+# 北京时间 21:33 = UTC 13:33
+# 分钟选 33 避开 GitHub Actions 整点/半点调度高峰
 on:
   schedule:
-    - cron: '0 5 * * *'
-    - cron: '0 14 * * *'
+    - cron: '33 2 * * *'   # 北京 10:33
+    - cron: '33 13 * * *'  # 北京 21:33
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: read  # 心跳只读 state.json，不需要写
 
 jobs:
   heartbeat:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: checkout
+      - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: run-heartbeat
+      - name: 运行心跳检查
         env:
           XTUIS_TOKEN: ${{ secrets.XTUIS_TOKEN }}
           STATE_FILE: ${{ github.workspace }}/state.json

@@ -198,7 +198,8 @@ def main():
 
     if is_first_run:
         seen = list(current.keys())
-        seen_coarse = list({airdrop_coarse_id(v["data"]) for v in current.values()})
+        seen_coarse = list({airdrop_coarse_id(v["data"]) for v in current.values()
+                           if str(v["data"].get("token") or "").strip() and str(v["data"].get("date") or "").strip()})
         save_state({
             "last_check": now_bjt().isoformat(),
             "last_success": now_bjt().isoformat(),
@@ -235,7 +236,10 @@ def main():
     for aid, info in current.items():
         if aid not in seen_ids:
             new_items.append(info)
-            seen_airdrops.add(airdrop_coarse_id(info["data"]))
+            # 只有 token+date 齐全才计入累计（避免 token 后补导致重复计数）
+            d = info["data"]
+            if str(d.get("token") or "").strip() and str(d.get("date") or "").strip():
+                seen_airdrops.add(airdrop_coarse_id(d))
 
     save_state({
         "last_check": now_bjt().isoformat(),
